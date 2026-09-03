@@ -136,10 +136,14 @@ async function parseUpdateToggle(toggleBlock) {
   let bottom = '';
   for (const c of children) {
     if (c.type !== 'paragraph') continue;
-    const text = stripBoldMarkers(await blockText(c));
-    if (!text) continue;
-    if (/^Bottom line:/i.test(text)) bottom = text.replace(/^Bottom line:\s*/i, '');
-    else points.push(text);
+    const plain = stripBoldMarkers(await blockText(c));
+    if (!plain) continue;
+    const htmlText = richTextToHtml(c.paragraph.rich_text);
+    if (/^Bottom line:/i.test(plain)) {
+      bottom = htmlText.replace(/^\s*(<strong>)?\s*Bottom line:\s*(<\/strong>)?\s*/i, '');
+    } else {
+      points.push(htmlText);
+    }
   }
   return { date, kind, title, points: points.slice(0, 6), bottom };
 }
