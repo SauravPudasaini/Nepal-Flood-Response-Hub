@@ -148,12 +148,21 @@ async function parseUpdateToggle(toggleBlock) {
   return { date, kind, title, points: points.slice(0, 6), bottom };
 }
 
-async function getSituationUpdates() {
+async function getSituationUpdatesAndHtml() {
   const topLevel = await getChildren(PAGE_IDS.situation);
   const outer = topLevel.find(b => b.type === 'toggle' && /Updated Periodically/i.test(plainText(b.toggle.rich_text)));
-  if (!outer) return [];
-  const innerToggles = (await getChildren(outer.id)).filter(b => b.type === 'toggle');
-  return Promise.all(innerToggles.map(parseUpdateToggle));
+  let updates = [];
+  if (outer) {
+    const innerToggles = (await getChildren(outer.id)).filter(b => b.type === 'toggle');
+    updates = await Promise.all(innerToggles.map(parseUpdateToggle));
+  }
+  // Render everything else on the page generically (excluding the outer toggle,
+  // which is already fully represented by the structured `updates` above —
+  // rendering it generically too would show empty/broken nested toggles since
+  // its update entries are several levels deep).
+  const rest = topLevel.filter(b => b !== outer);
+  const html = await blocksToHtml(rest, 2);
+  return { updates, html };
 }
 
 async function getPageHtml(pageId) {
@@ -171,9 +180,9 @@ exports.handler = async function () {
     return { statusCode: 500, headers, body: JSON.stringify({ error: 'NOTION_TOKEN not set' }) };
   }
   try {
-    const keys = Object.keys(PAGE_IDS);
-    const [updates, pageEntries] = await Promise.all([
-      getSituationUpdates().catch(() => []),
+    const keys = Object.keys(PAGE_IDS).filter(k => k !== 'situation');
+    const [situation, pageEntries] = await Promise.all([
+      getSituationUpdatesAndHtml().catch(() => ({ updates: [], html: '' })),
       Promise.all(keys.map(async k => {
         try { return [k, await getPageHtml(PAGE_IDS[k])]; }
         catch (e) { return [k, '']; }
@@ -181,6 +190,8 @@ exports.handler = async function () {
     ]);
     const pages = {};
     for (const [k, html] of pageEntries) pages[k] = { html };
+    pages.situation = { html: situation.html };
+    const updates = situation.updates;
     // Fold Coordination content into the "outside" page.
     if (pages.coordination && pages.coordination.html) {
       pages.outside = pages.outside || { html: '' };
