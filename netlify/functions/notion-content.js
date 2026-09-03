@@ -167,7 +167,7 @@ exports.handler = async function () {
     return { statusCode: 500, headers, body: JSON.stringify({ error: 'NOTION_TOKEN not set' }) };
   }
   try {
-    const keys = Object.keys(PAGE_IDS).filter(k => k !== 'situation');
+    const keys = Object.keys(PAGE_IDS);
     const [updates, pageEntries] = await Promise.all([
       getSituationUpdates().catch(() => []),
       Promise.all(keys.map(async k => {
