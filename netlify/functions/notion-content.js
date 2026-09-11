@@ -134,12 +134,18 @@ async function parseUpdateToggle(toggleBlock) {
   const children = await getChildren(toggleBlock.id);
   const points = [];
   let bottom = '';
+  let nextIsBottom = false;
   for (const c of children) {
     if (c.type !== 'paragraph') continue;
     const plain = stripBoldMarkers(await blockText(c));
     if (!plain) continue;
     const htmlText = richTextToHtml(c.paragraph.rich_text);
-    if (/^Bottom line:/i.test(plain)) {
+    if (nextIsBottom) {
+      bottom = htmlText;
+      nextIsBottom = false;
+    } else if (/^Bottom line:?\s*$/i.test(plain)) {
+      nextIsBottom = true;
+    } else if (/^Bottom line:/i.test(plain)) {
       bottom = htmlText.replace(/^\s*(<strong>)?\s*Bottom line:\s*(<\/strong>)?\s*/i, '');
     } else {
       points.push(htmlText);
