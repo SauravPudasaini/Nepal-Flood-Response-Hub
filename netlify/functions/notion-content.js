@@ -148,6 +148,48 @@ async function parseUpdateToggle(toggleBlock) {
   return { date, kind, title, points: points.slice(0, 6), bottom };
 }
 
+// Best-effort extraction of headline casualty figures from the newest update's
+// own text, so the homepage shows one number tied to a visible date instead of
+// a stale hardcoded figure or a mismatched third-party number.
+function extractLiveStats(update) {
+  if (!update) return null;
+  const text = [update.title, ...(update.points || []), update.bottom].filter(Boolean).join(' ').replace(/<[^>]+>/g, '');
+  const grab = (re) => { const m = text.match(re); return m ? m[1] : null; };
+  const stats = {
+    deaths: grab(/([\d,]+)\+?\s*(confirmed\s+)?deaths?/i),
+    missing: grab(/([\d,]+)\+?\s*missing/i),
+    injured: grab(/([\d,]+)\+?\s*injured/i),
+    rescued: grab(/([\d,]+)\+?\s*rescued/i),
+  };
+  return Object.values(stats).some(Boolean) ? stats : null;
+}
+
+// Devanagari digits -> Latin, keeping thousands separators.
+function devToLatinDigits(s) {
+  const map = { '\u0966':'0','\u0967':'1','\u0968':'2','\u0969':'3','\u096A':'4','\u096B':'5','\u096C':'6','\u096D':'7','\u096E':'8','\u096F':'9' };
+  return s.replace(/[\u0966-\u096F]/g, d => map[d]);
+}
+
+// Scrapes the Rasuwa Flood Bulletin's own meta description, which the author
+// keeps to one consistent line ("NDRRMA ... : शव X · सम्पर्कविहीन करिब Y · घाइते Z · उद्धार W.").
+async function fetchBulletinStats() {
+  try {
+    const res = await fetch('https://nirajbhusal.github.io/rasuwa-flood-bulletin/');
+    if (!res.ok) return null;
+    const html = await res.text();
+    const descMatch = html.match(/<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i);
+    const desc = descMatch ? descMatch[1] : '';
+    const grab = (re) => { const m = desc.match(re); return m ? devToLatinDigits(m[1]).trim() : null; };
+    const stats = {
+      deaths: grab(/\u0936\u0935\s*([\u0966-\u096F,]+)/),
+      missing: grab(/\u0938\u092e\u094d\u092a\u0930\u094d\u0915\u0935\u093f\u0939\u0940\u0928\s*(?:\u0915\u0930\u093f\u092c\s*)?([\u0966-\u096F,]+)/),
+      injured: grab(/\u0918\u093e\u0907\u0924\u0947\s*([\u0966-\u096F,]+)/),
+      rescued: grab(/\u0909\u0926\u094d\u0927\u093e\u0930\s*([\u0966-\u096F,]+)/),
+    };
+    return Object.values(stats).some(Boolean) ? stats : null;
+  } catch (e) { return null; }
+}
+
 async function getSituationUpdatesAndHtml() {
   const topLevel = await getChildren(PAGE_IDS.situation);
   const outer = topLevel.find(b => b.type === 'toggle' && /Updated Periodically/i.test(plainText(b.toggle.rich_text)));
@@ -162,7 +204,8 @@ async function getSituationUpdatesAndHtml() {
   // its update entries are several levels deep).
   const rest = topLevel.filter(b => b !== outer);
   const html = await blocksToHtml(rest, 2);
-  return { updates, html };
+  const liveStats = extractLiveStats(updates[0]);
+  return { updates, html, liveStats, liveStatsDate: updates[0] ? updates[0].date : null };
 }
 
 async function getPageHtml(pageId) {
@@ -181,12 +224,13 @@ exports.handler = async function () {
   }
   try {
     const keys = Object.keys(PAGE_IDS).filter(k => k !== 'situation');
-    const [situation, pageEntries] = await Promise.all([
+    const [situation, pageEntries, bulletinStats] = await Promise.all([
       getSituationUpdatesAndHtml().catch(() => ({ updates: [], html: '' })),
       Promise.all(keys.map(async k => {
         try { return [k, await getPageHtml(PAGE_IDS[k])]; }
         catch (e) { return [k, '']; }
       })),
+      fetchBulletinStats(),
     ]);
     const pages = {};
     for (const [k, html] of pageEntries) pages[k] = { html };
@@ -198,7 +242,7 @@ exports.handler = async function () {
       pages.outside.html = pages.outside.html + '<hr>' + pages.coordination.html;
     }
     delete pages.coordination;
-    return { statusCode: 200, headers, body: JSON.stringify({ updatedAt: new Date().toISOString(), updates, pages }) };
+    return { statusCode: 200, headers, body: JSON.stringify({ updatedAt: new Date().toISOString(), updates, pages, liveStats: situation.liveStats, liveStatsDate: situation.liveStatsDate, bulletinStats }) };
   } catch (err) {
     return { statusCode: 500, headers, body: JSON.stringify({ error: String(err) }) };
   }
